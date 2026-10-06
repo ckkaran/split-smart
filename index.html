@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SplitSmart – Group Expense Splitter</title>
+<style>
+  :root{--bg:#f7f7fb;--card:#fff;--text:#111827;--muted:#6b7280;--line:#e5e7eb;--accent:#0ea5e9;--pos:#059669;--neg:#dc2626}
+  @media(prefers-color-scheme:dark){:root{--bg:#0b1220;--card:#111a2e;--text:#e5e7eb;--muted:#94a3b8;--line:#24324d;--accent:#38bdf8;--pos:#34d399;--neg:#f87171}}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--text);padding:24px 16px}
+  .wrap{max-width:960px;margin:auto}
+  h1{font-size:1.6rem;margin-bottom:4px}h1 span{color:var(--accent)}
+  .sub{color:var(--muted);margin-bottom:20px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:760px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card h2{font-size:1rem;margin-bottom:12px}
+  form{display:flex;flex-wrap:wrap;gap:8px}
+  input,select,button{font:inherit;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text)}
+  input{flex:1;min-width:120px}
+  button{background:var(--accent);color:#fff;border:none;cursor:pointer}
+  button.ghost{background:none;color:var(--muted);padding:2px 6px}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+  .chip{background:var(--bg);border:1px solid var(--line);border-radius:20px;padding:4px 10px;font-size:.85rem}
+  .chip label{cursor:pointer}
+  ul{list-style:none}
+  li{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);font-size:.92rem}
+  li:last-child{border:none}
+  .muted{color:var(--muted);font-size:.8rem}
+  .pos{color:var(--pos);font-weight:600}.neg{color:var(--neg);font-weight:600}
+  .settle li{justify-content:flex-start;gap:8px}
+  .empty{color:var(--muted);font-size:.9rem;padding:8px 0}
+  .total{font-size:1.4rem;font-weight:700}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Split<span>Smart</span></h1>
+  <p class="sub">Split trip and group expenses fairly, and settle up in the fewest possible payments.</p>
+  <div class="grid">
+    <div class="card">
+      <h2>👥 People</h2>
+      <form id="personForm"><input id="personName" placeholder="Add a name" required maxlength="30"><button>Add</button></form>
+      <div class="chips" id="people"></div>
+    </div>
+    <div class="card">
+      <h2>🧾 Add expense</h2>
+      <form id="expenseForm">
+        <input id="desc" placeholder="What for? (e.g. Dinner)" required maxlength="60">
+        <input id="amount" type="number" min="1" step="0.01" placeholder="Amount ₹" required>
+        <select id="payer" required></select>
+        <button>Add</button>
+      </form>
+      <p class="muted" style="margin-top:8px">Split between:</p>
+      <div class="chips" id="splitWith"></div>
+    </div>
+    <div class="card">
+      <h2>📋 Expenses <span class="muted" id="totalLbl"></span></h2>
+      <ul id="expenses"></ul>
+    </div>
+    <div class="card">
+      <h2>⚖️ Balances</h2>
+      <ul id="balances"></ul>
+      <h2 style="margin-top:16px">✅ Settle up</h2>
+      <ul class="settle" id="settle"></ul>
+    </div>
+  </div>
+</div>
+<script>
+const store={get(k,d){try{return JSON.parse(localStorage.getItem(k))??d}catch{return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch{}}};
+let state=store.get('splitsmart',{people:['Arun','Divya','Karan'],expenses:[
+  {id:1,desc:'Hotel',amount:6000,payer:'Arun',split:['Arun','Divya','Karan']},
+  {id:2,desc:'Dinner',amount:1500,payer:'Divya',split:['Arun','Divya','Karan']}]});
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const inr=n=>'₹'+n.toLocaleString('en-IN',{maximumFractionDigits:2});
+const save=()=>store.set('splitsmart',state);
+
+function balances(){
+  const b=Object.fromEntries(state.people.map(p=>[p,0]));
+  state.expenses.forEach(e=>{
+    const share=e.amount/e.split.length;
+    if(b[e.payer]!==undefined)b[e.payer]+=e.amount;
+    e.split.forEach(p=>{if(b[p]!==undefined)b[p]-=share});
+  });
+  return b;
+}
+// Greedy min-cash-flow: match largest debtor with largest creditor
+function settlements(b){
+  const cred=[],debt=[];
+  Object.entries(b).forEach(([p,v])=>{v=Math.round(v*100)/100;if(v>0)cred.push([p,v]);else if(v<0)debt.push([p,-v])});
+  const out=[];
+  while(cred.length&&debt.length){
+    cred.sort((a,b)=>b[1]-a[1]);debt.sort((a,b)=>b[1]-a[1]);
+    const amt=Math.min(cred[0][1],debt[0][1]);
+    out.push({from:debt[0][0],to:cred[0][0],amt:Math.round(amt*100)/100});
+    cred[0][1]-=amt;debt[0][1]-=amt;
+    if(cred[0][1]<0.01)cred.shift();if(debt[0][1]<0.01)debt.shift();
+  }
+  return out;
+}
+function render(){
+  $('#people').innerHTML=state.people.map(p=>`<span class="chip">${esc(p)} <button class="ghost" data-rm="${esc(p)}">✕</button></span>`).join('')||'<p class="empty">Add at least two people.</p>';
+  $('#payer').innerHTML=state.people.map(p=>`<option>${esc(p)}</option>`).join('');
+  $('#splitWith').innerHTML=state.people.map(p=>`<span class="chip"><label><input type="checkbox" value="${esc(p)}" checked> ${esc(p)}</label></span>`).join('');
+  const total=state.expenses.reduce((s,e)=>s+e.amount,0);
+  $('#totalLbl').textContent=total?`· total ${inr(total)}`:'';
+  $('#expenses').innerHTML=state.expenses.map(e=>`<li><span>${esc(e.desc)}<br><span class="muted">${esc(e.payer)} paid · split ${e.split.length} ways</span></span><span>${inr(e.amount)} <button class="ghost" data-del="${e.id}">✕</button></span></li>`).join('')||'<p class="empty">No expenses yet.</p>';
+  const b=balances();
+  $('#balances').innerHTML=Object.entries(b).map(([p,v])=>`<li><span>${esc(p)}</span><span class="${v>=0?'pos':'neg'}">${v>=0?'gets back ':'owes '}${inr(Math.abs(v))}</span></li>`).join('');
+  const s=settlements(b);
+  $('#settle').innerHTML=s.map(t=>`<li><b>${esc(t.from)}</b> → <b>${esc(t.to)}</b> <span class="pos">${inr(t.amt)}</span></li>`).join('')||'<p class="empty">All settled 🎉</p>';
+}
+$('#personForm').addEventListener('submit',e=>{e.preventDefault();const n=$('#personName').value.trim();
+  if(n&&!state.people.includes(n)){state.people.push(n);save();render()}e.target.reset()});
+$('#expenseForm').addEventListener('submit',e=>{e.preventDefault();
+  const split=[...document.querySelectorAll('#splitWith input:checked')].map(i=>i.value);
+  if(!split.length)return alert('Pick at least one person to split with.');
+  state.expenses.push({id:Date.now(),desc:$('#desc').value.trim(),amount:parseFloat($('#amount').value),payer:$('#payer').value,split});
+  save();e.target.reset();render()});
+document.addEventListener('click',e=>{
+  if(e.target.dataset.del){state.expenses=state.expenses.filter(x=>x.id!=e.target.dataset.del);save();render()}
+  if(e.target.dataset.rm){const p=e.target.dataset.rm;
+    if(state.expenses.some(x=>x.payer===p||x.split.includes(p)))return alert(p+' is part of an expense — remove those first.');
+    state.people=state.people.filter(x=>x!==p);save();render()}
+});
+render();
+</script>
+</body>
+</html>
